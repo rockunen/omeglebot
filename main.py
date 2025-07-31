@@ -1,97 +1,111 @@
-import sqlite3
 import os
 import asyncio
+import psycopg2
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from dotenv import load_dotenv
+from psycopg2 import pool
+db_pool = None
 
-DB_FILE = "omegledb.db"
-TOKEN = "8124998861:AAGGUWzHByOxg3loZz0FUjT5M_tc2vUciz0"
+def init_pool():
+    global db_pool
+    db_pool = psycopg2.pool.SimpleConnectionPool(
+        1, 20,  # minconn, maxconn
+        dsn=DB_URL,
+        sslmode='require'
+    )
+
+load_dotenv()
+
+DB_URL = os.getenv("DATABASE_URL")  # You MUST set this in your Railway environment
+TOKEN = os.getenv("BOT_TOKEN")  # Store your bot token in .env or Railway variables
+
+def get_conn():
+    return db_pool.getconn()
 
 # --- DB Setup ---
 def init_db():
-    conn = sqlite3.connect("db.sqlite3", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            telegram_id INTEGER PRIMARY KEY,
+            telegram_id BIGINT PRIMARY KEY,
             username TEXT,
             is_available BOOLEAN,
-            is_paired_with INTEGER,
+            is_paired_with BIGINT,
             reports INTEGER DEFAULT 0,
-            blocked BOOLEAN DEFAULT 0
+            blocked BOOLEAN DEFAULT FALSE
         )
     ''')
-    cursor.execute('''
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            sender_id BIGINT,
             sender_username TEXT,
-            receiver_id INTEGER,
+            receiver_id BIGINT,
             receiver_username TEXT,
             content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     conn.commit()
     conn.close()
 
 def register_user(user: Update.effective_user):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
         cur.execute('''
-            INSERT OR IGNORE INTO users (telegram_id, username, is_available, is_paired_with)
-            VALUES (?, ?, 0, NULL)
+            INSERT INTO users (telegram_id, username, is_available, is_paired_with)
+            VALUES (%s, %s, FALSE, NULL)
+            ON CONFLICT (telegram_id) DO NOTHING
         ''', (user.id, user.username))
-        cur.execute('''
-            UPDATE users SET username=? WHERE telegram_id=?
-        ''', (user.username, user.id))  # Keep username updated
-
+        cur.execute('UPDATE users SET username=%s WHERE telegram_id=%s', (user.username, user.id))
         conn.commit()
 
 def get_user(telegram_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        cur.execute("SELECT * FROM users WHERE telegram_id=%s", (telegram_id,))
         return cur.fetchone()
 
 def find_partner(my_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT telegram_id FROM users WHERE is_available=1 AND telegram_id != ? AND blocked=0", (my_id,))
+        cur.execute("SELECT telegram_id FROM users WHERE is_available=TRUE AND telegram_id != %s AND blocked=FALSE LIMIT 1", (my_id,))
         result = cur.fetchone()
         if result:
             partner_id = result[0]
-            cur.execute("UPDATE users SET is_available=0, is_paired_with=? WHERE telegram_id=?", (partner_id, my_id))
-            cur.execute("UPDATE users SET is_available=0, is_paired_with=? WHERE telegram_id=?", (my_id, partner_id))
+            cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=%s WHERE telegram_id=%s", (partner_id, my_id))
+            cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=%s WHERE telegram_id=%s", (my_id, partner_id))
             conn.commit()
             return partner_id
         else:
-            cur.execute("UPDATE users SET is_available=1, is_paired_with=NULL WHERE telegram_id=?", (my_id,))
+            cur.execute("UPDATE users SET is_available=TRUE, is_paired_with=NULL WHERE telegram_id=%s", (my_id,))
             conn.commit()
             return None
 
 def get_partner(telegram_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (telegram_id,))
+        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else None
 
 def get_username(telegram_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT username FROM users WHERE telegram_id=?", (telegram_id,))
+        cur.execute("SELECT username FROM users WHERE telegram_id=%s", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else ""
 
 def stop_chat(user_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (user_id,))
+        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (user_id,))
         result = cur.fetchone()
         if result and result[0]:
             partner_id = result[0]
-            cur.execute("UPDATE users SET is_available=0, is_paired_with=NULL WHERE telegram_id IN (?, ?)", (user_id, partner_id))
+            cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=NULL WHERE telegram_id IN (%s, %s)", (user_id, partner_id))
             conn.commit()
             return partner_id
     return None
@@ -99,27 +113,27 @@ def stop_chat(user_id):
 def add_message(sender_id, receiver_id, content):
     sender_username = get_username(sender_id)
     receiver_username = get_username(receiver_id)
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
         cur.execute('''
             INSERT INTO messages (sender_id, sender_username, receiver_id, receiver_username, content)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
         ''', (sender_id, sender_username, receiver_id, receiver_username, content))
         conn.commit()
 
 def report_user(from_id):
-    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
+    with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (from_id,))
+        cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (from_id,))
         result = cur.fetchone()
         if result and result[0]:
             partner_id = result[0]
-            cur.execute("UPDATE users SET reports = reports + 1 WHERE telegram_id=?", (partner_id,))
-            cur.execute("SELECT reports FROM users WHERE telegram_id=?", (partner_id,))
+            cur.execute("UPDATE users SET reports = reports + 1 WHERE telegram_id=%s", (partner_id,))
+            cur.execute("SELECT reports FROM users WHERE telegram_id=%s", (partner_id,))
             reports = cur.fetchone()[0]
             if reports >= 5:
-                cur.execute("UPDATE users SET blocked = 1 WHERE telegram_id=?", (partner_id,))
-            cur.execute("UPDATE users SET is_available=0, is_paired_with=NULL WHERE telegram_id IN (?, ?)", (from_id, partner_id))
+                cur.execute("UPDATE users SET blocked = TRUE WHERE telegram_id=%s", (partner_id,))
+            cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=NULL WHERE telegram_id IN (%s, %s)", (from_id, partner_id))
             conn.commit()
             return partner_id, reports
     return None, 0
@@ -127,18 +141,16 @@ def report_user(from_id):
 # --- Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user: register_user(update.effective_user)
-
-    await update.message.reply_text("👋 Welcome to Anonymous Chat!\nUse /find to connect with a stranger.")
+    await update.message.reply_text("👋 Welcome to Anonymous Chat!\nUse /find to connect with a stranger.\n We are not responsible for any vulgar chats")
 
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
     if get_user(telegram_id)[5]:  # if blocked
         await update.message.reply_text("🚫 You have been blocked due to multiple reports.")
         return
-    # ❌ Prevent if user is already chatting
     current_partner = get_partner(telegram_id)
     if current_partner:
-        await update.message.reply_text("❌ You are already in a chat. Use /stop to end current chat before finding a new one.")
+        await update.message.reply_text("❌ You're already in a chat. Use /stop first.")
         return
     partner = find_partner(telegram_id)
     if partner:
@@ -151,8 +163,8 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     partner_id = stop_chat(user_id)
     if partner_id:
-        await context.bot.send_message(partner_id, "❌ The stranger has ended the chat.")
-        await update.message.reply_text("❌ You have left the chat.")
+        await context.bot.send_message(partner_id, "❌ The stranger has left the chat.")
+        await update.message.reply_text("❌ You left the chat.")
     else:
         await update.message.reply_text("You're not in a chat.")
 
@@ -175,10 +187,11 @@ async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(partner_id, text)
         add_message(sender_id, partner_id, text)
     else:
-        await update.message.reply_text("❗ You are not in a chat. Use /find to connect.")
+        await update.message.reply_text("❗ You're not in a chat. Use /find to connect.")
 
 # --- Main ---
 if __name__ == "__main__":
+    init_pool()
     init_db()
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -190,4 +203,3 @@ if __name__ == "__main__":
 
     print("Bot is running...")
     asyncio.run(app.run_polling())
-
