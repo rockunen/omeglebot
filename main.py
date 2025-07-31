@@ -9,7 +9,7 @@ TOKEN = "8124998861:AAGGUWzHByOxg3loZz0FUjT5M_tc2vUciz0"
 
 # --- DB Setup ---
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect("db.sqlite3", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -36,7 +36,7 @@ def init_db():
     conn.close()
 
 def register_user(user: Update.effective_user):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute('''
             INSERT OR IGNORE INTO users (telegram_id, username, is_available, is_paired_with)
@@ -49,13 +49,13 @@ def register_user(user: Update.effective_user):
         conn.commit()
 
 def get_user(telegram_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
         return cur.fetchone()
 
 def find_partner(my_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT telegram_id FROM users WHERE is_available=1 AND telegram_id != ? AND blocked=0", (my_id,))
         result = cur.fetchone()
@@ -71,21 +71,21 @@ def find_partner(my_id):
             return None
 
 def get_partner(telegram_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else None
 
 def get_username(telegram_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT username FROM users WHERE telegram_id=?", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else ""
 
 def stop_chat(user_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (user_id,))
         result = cur.fetchone()
@@ -99,7 +99,7 @@ def stop_chat(user_id):
 def add_message(sender_id, receiver_id, content):
     sender_username = get_username(sender_id)
     receiver_username = get_username(receiver_id)
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute('''
             INSERT INTO messages (sender_id, sender_username, receiver_id, receiver_username, content)
@@ -108,7 +108,7 @@ def add_message(sender_id, receiver_id, content):
         conn.commit()
 
 def report_user(from_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE, check_same_thread=False) as conn:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=?", (from_id,))
         result = cur.fetchone()

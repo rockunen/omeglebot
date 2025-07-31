@@ -8,7 +8,7 @@ ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "12345"
 
 def get_db():
-    conn = sqlite3.connect("omegledb.db")
+    conn = sqlite3.connect("omegledb.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
