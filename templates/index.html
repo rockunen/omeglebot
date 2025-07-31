@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Message Logs</title>
+  <style>
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #ccc; padding: 8px; }
+    th { background-color: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <h2>📜 Message Logs</h2>
+  <a href="/logout">Logout</a>
+  <table>
+    <tr>
+      <th>ID</th>
+      <th>Sender</th>
+      <th>Receiver</th>
+      <th>Message</th>
+      <th>Timestamp</th>
+    </tr>
+    {% for msg in messages %}
+    <tr>
+      <td>{{ msg.id }}</td>
+<td>{{ msg.sender_username }} ({{ msg.sender_id }})</td>
+<td>{{ msg.receiver_username }} ({{ msg.receiver_id }})</td>
+
+      <td>{{ msg.content }}</td>
+      <td>{{ msg.timestamp }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <h2>👥 User Info</h2>
+  <table>
+    <tr>
+      <th>User ID</th>
+      <th>Reports</th>
+      <th>Blocked</th>
+    </tr>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.telegram_id }}</td>
+      <td>{{ u.reports }}</td>
+      <td>{{ "✅" if u.blocked else "❌" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
