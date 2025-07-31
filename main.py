@@ -52,7 +52,8 @@ def init_db():
     conn.close()
 
 def register_user(user: Update.effective_user):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute('''
             INSERT INTO users (telegram_id, username, is_available, is_paired_with)
@@ -61,15 +62,21 @@ def register_user(user: Update.effective_user):
         ''', (user.id, user.username))
         cur.execute('UPDATE users SET username=%s WHERE telegram_id=%s', (user.username, user.id))
         conn.commit()
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 
 def get_user(telegram_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE telegram_id=%s", (telegram_id,))
         return cur.fetchone()
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 
 def find_partner(my_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT telegram_id FROM users WHERE is_available=TRUE AND telegram_id != %s AND blocked=FALSE LIMIT 1", (my_id,))
         result = cur.fetchone()
@@ -83,23 +90,31 @@ def find_partner(my_id):
             cur.execute("UPDATE users SET is_available=TRUE, is_paired_with=NULL WHERE telegram_id=%s", (my_id,))
             conn.commit()
             return None
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 
 def get_partner(telegram_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else None
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 
 def get_username(telegram_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT username FROM users WHERE telegram_id=%s", (telegram_id,))
         result = cur.fetchone()
         return result[0] if result else ""
-
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 def stop_chat(user_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (user_id,))
         result = cur.fetchone()
@@ -108,21 +123,27 @@ def stop_chat(user_id):
             cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=NULL WHERE telegram_id IN (%s, %s)", (user_id, partner_id))
             conn.commit()
             return partner_id
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
     return None
 
 def add_message(sender_id, receiver_id, content):
     sender_username = get_username(sender_id)
     receiver_username = get_username(receiver_id)
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute('''
             INSERT INTO messages (sender_id, sender_username, receiver_id, receiver_username, content)
             VALUES (%s, %s, %s, %s, %s)
         ''', (sender_id, sender_username, receiver_id, receiver_username, content))
         conn.commit()
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
 
 def report_user(from_id):
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         cur = conn.cursor()
         cur.execute("SELECT is_paired_with FROM users WHERE telegram_id=%s", (from_id,))
         result = cur.fetchone()
@@ -136,6 +157,8 @@ def report_user(from_id):
             cur.execute("UPDATE users SET is_available=FALSE, is_paired_with=NULL WHERE telegram_id IN (%s, %s)", (from_id, partner_id))
             conn.commit()
             return partner_id, reports
+    finally:
+        db_pool.putconn(conn)  # ✅ always release the connection
     return None, 0
 
 # --- Handlers ---
